@@ -110,6 +110,7 @@ load data
 ```{r}
 raw_corr <- read_csv("data_clean/raw_corr.csv")
 pred_corr_heights <- read_csv("data_clean/pred_corr_heights.csv")
+height_disp_coef <- read_csv("data_clean/height_disp_coef.csv")
 
 #wrangle for figures and 
 predrought_height <- grow_time %>% 
@@ -125,7 +126,7 @@ predrought_height <- grow_time %>%
 
 
 ```{r}
-corr.heights.plot <- raw_corr %>% 
+corr_heights_plot <- raw_corr %>% 
   ggplot(aes(x = expDayHeight, y = r, group = drought)) +
   geom_point(alpha = 0.5, aes(colour = drought), position = position_dodge2(0.2)) +
   geom_ribbon(data = pred_corr_heights, aes(ymin = conf.low, ymax = conf.high, fill = drought), 
@@ -147,7 +148,7 @@ corr.heights.plot <- raw_corr %>%
         legend.key = element_blank(),
         text = element_text(size = 10))
 
-corr.heights.plot
+corr_heights_plot
 #ggsave("figures/pop6_corday_plot.pdf", height = 5, width = 5, units = "in")
 
 # raw height correlations
@@ -214,7 +215,7 @@ var_height_plot
 # Fig S.2
 
 ```{r}
-raw.corr.plot <- grow_time %>% 
+raw_corr_plot <- grow_time %>% 
   filter(population == "p6" & drought == "d0" & expDayHeight <= 135 & expDayHeight > 9 | population == "p6" & drought == "d1" & expDayHeight <= 135 & expDayHeight > 9) %>%
   dplyr::select(cellID, drought, height.Cm, expDayHeight) %>% 
   left_join(predrought_height, by = "cellID") %>% 
@@ -228,7 +229,7 @@ raw.corr.plot <- grow_time %>%
   facet_wrap(~ expDayHeight) +
   theme(legend.position = "bottom")
 
-raw.corr.plot
+raw_corr_plot
 #ggsave("figures/thesis/pop6_rawcorr_plot.pdf", height = 8, width = 10.5, units = "in")
 ```
 
@@ -252,6 +253,39 @@ raw_height_plot<- grow_time %>%
 raw_height_plot
 #ggsave("figures/pop6_rawheight_plot.pdf", height = 5, width = 5, units = "in")
 ```
+
+# Fig S.5
+
+load data
+```{r}
+pred_comp_grow <- read_csv("data_clean/pred_comp_grow.csv")
+```
+
+```{r}
+comp_grow_plot <- comp_p6 %>% 
+  ggplot(aes(x = dImpact, y = postRGR, group = drought)) + #added one for visible 0s
+  geom_ribbon(data = pred_comp_grow, aes(ymin = conf.low, ymax = conf.high, fill = drought), alpha = 0.3) +
+  geom_point(alpha = 0.4, aes(colour = drought)) +
+  geom_line(data = pred_comp, aes(colour = drought), size = 1) +
+  scale_colour_manual(values = c("#4a9152", "#de9b71"),
+                      name = " ",
+                      labels = c("control", "early drought")) +
+  scale_fill_manual(values = c("#4a9152", "#de9b71"),
+                      name = " ",
+                      labels = c("control", "early drought")) +
+  ylab("Post-drought growth rate (cm * week^-1)") +
+  xlab("Post-drought height / pre-drought height") +
+  theme_classic() + 
+  theme(legend.position = "bottom",
+        #legend.title = element_text(hjust = 0.5),
+        legend.background = element_blank(),
+        legend.key = element_blank(),
+        text = element_text(size = 10))
+
+comp_grow_plot
+#ggsave("figures/pop6_comp_grow_plot.pdf", height = 5, width = 5, units = "in")
+```
+
 
 # Fig S.6
 
