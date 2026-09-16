@@ -1,0 +1,508 @@
+---
+title: "01_data_clean"
+author: "Jessica Kowalski, University of British Columbia, jkowals@zoology.ubc.ca"
+date: '2023-08-19'
+output: html_document
+---
+Last updated: September 14, 2026
+
+This Markdown document contains the required code to tidy and wrangle the data for analyzing variance in seed output and growth trajectories of *B. hordeaceus* in "The deterministic underpinnings of demographic stochasticity". 
+
+# Set up
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+load packages
+```{r, echo = FALSE, message = FALSE}
+library(tidyverse)
+```
+--                                                                              --
+Note: snake_case for objects, camelCase for column names (units following '.').
+--                                                                              --
+
+#Growth data
+load files
+```{r, echo = FALSE, message = FALSE}
+grow1 <- read_csv("data_raw/exp1_growth.csv")
+grow_2_seed <- read_csv("data_raw/exp1_growth_2seeds.csv")
+cull <- read_csv("data_raw/exp1_seed_cull.csv")
+biomass1 <- read_csv("data_raw/exp1_biomass.csv")
+demo <- read_csv("data_raw/exp1_demographics.csv")
+```
+--              --
+INITIAL DATAFRAMES
+--              --
+
+**grow1** : contains weekly growth data (height) for *B. hordeaceus* in the first drought experiment (2021-2022) AFTER seed cull 
+  - cellID = unique number linked to deecell position in greenhouse
+  - repID = unique replicate identifier 
+  - '2021-11-05' -- '2022-04-22' = height measurements of *B. hordeaceus* replicates measured to the nearest tenth of a centimeter (column name signifies date measured in the format Y-M-D)
+
+**grow_2_seed** : contains weekly growth data (height) for *B. hordeaceus* in the first drought experiment (2021-2022) PRIOR TO seed cull (i.e., 2 seed planted per pot to reduce incidents of failed germination)
+  - cellID = unique number linked to deecell position in greenhouse
+  - repID = unique replicate identifier 
+  - seed = identifiers used to distinguish two seeds (A, B) originally planted in each replicate pot to minimize germination failure, kept seed that successfully germinated or if both did, relied on random generator to choose which seed kept (see cull df for list of culled seeds)
+  - '2021-10-08' -- '2021-10-29' = height measurements of *B. hordeaceus* replicates measured to the nearest tenth of a centimeter (column name signfies date measured in the format Y-M-D)
+
+**cull** : contains list of replicate duplicates that were culled ~3 weeks into the experiment
+  - cellID = unique number linked to deecell position in greenhouse
+  - repID = unique replicate identifier 
+  - seedKept = ID of seed kept after cull 
+  
+**biomass1** : contains final biomass of replicates in the first drought experiment harvested immediately after premature end of experiment
+  - cellID = unique number linked to deecell position in greenhouse
+  - repID = unique replicate identifier 
+  - biomass = weight of replicate in grams
+  
+In the above dataframes, repID contains the following structure: 
+
+                                pop.rep#_droughtTX_germTX
+where: 
+  - pop = signifies which population the original seed-bearing individual came from (seed was collected from 5 individuals belonging to unique populations located in McLaughlin Nature Reserve)
+  - rep# = replicate number; 15 replicates were planted for each population x drought treatment x germination treatment combination
+  - droughtTX = drought treatment replicate was exposed to: d0 - no drought, d1 - early drought, d2 - mid-lifecycle drought, d3 - late drought
+  - germTX = germination treatment replicate was exposed to: ge - variability in germination rate was enhanced by planting 1/3 of the total 15 replicates every other day over the course of 5 days, gn - natural variability in germination rates were preserved by planting all replicates  on the same day at the same time   
+
+## Clean
+check for NAs & fix
+```{r}
+grow_2_seed %>% 
+  filter_all(any_vars(is.na(.))) #don't need to fix b/c reps were culled (kept 287B and 515A)
+
+grow1_NAs <- grow1 %>% 
+  filter_all(any_vars(is.na(.))) %>% 
+  mutate(`2021-11-19.2` = `2021-11-12` + ((`2021-11-26` - `2021-11-12`)/2)) %>% 
+  dplyr::select(1:2,22)
+#NAs due to missed measurements on 2021-11-19: replace with height that is halfway between height values recorded on 2021-11-12 and 2021-11-26
+
+#create new grow1 df without NAs
+cor_grow1 <- grow1 %>% 
+  left_join(grow1_NAs, by = c("cellID", 'repID')) %>% 
+  mutate(`2021-11-19` = case_when(is.na(`2021-11-19`) ~ `2021-11-19.2`, 
+                                  TRUE ~ `2021-11-19`)) %>% #incorporate calculated values into 2021-11-19 column
+  dplyr::select(-`2021-11-19.2`) #remove column with incorporated values
+
+biomass1 <- biomass1 %>% 
+  rename(cellID = cell_ID, repID = rep_ID) # rename to join to grow_time later
+
+#df to use for filtering out replicates that have already flowered or died by the end of the experiment
+demo_filter <- demo %>% 
+  filter(seedNum == 0) %>% #remove individuals who have set seed (signifies change in growth form)
+  filter(is.na(flowerStartDate)) %>% #remove individuals who have began flowering (signifies change in growth form)
+  filter(is.na(flowerEndDate)) %>% #remove individuals who have flowered (signifies change in growth form)
+  filter(is.na(deathDate)) %>% #remove individuals who have died (could have lost biomass prior to death)
+  select(cellID, repID)
+```
+
+make temporary df for cleaning
+```{r}
+#convert grow1 and grow_2_seed to long format & combine into temp df
+tgrow_time <- grow_2_seed %>% 
+  left_join(cor_grow1, by = c("repID", "cellID")) %>% 
+  left_join(cull, by = c("repID", "cellID")) %>% 
+  filter(seed == seedKept) %>% # keep rows where seed matches seed kept to remove culled phytometers
+  dplyr::select(-seedKept, -seed) %>% #remove variables not needed in analysis
+  pivot_longer(cols = 3:25, names_to = "heightDate", values_to = "tempHeight") %>% 
+  mutate(heightDate = as.Date(heightDate))
+```
+
+## Wrangle
+make corrections in height df
+```{r}
+grow_time <- tgrow_time %>% 
+  mutate(height.Cm = case_when(cellID == 86 & heightDate == "2022-01-21" ~ 16.7,
+                               cellID == 31 & heightDate == '2021-12-30' ~ 12.2,
+                               cellID == 306 & heightDate == '2021-12-10' ~ 11.6,
+                               cellID == 306 & heightDate == '2021-12-17' ~ 11.6,
+                               cellID == 328 & heightDate == '2022-01-28' ~ 24.2,
+                               cellID == 41 & heightDate == '2021-12-17' ~ 10.9,
+                               cellID == 150 & heightDate == '2022-01-14' ~ 18.7,
+                               cellID == 201 & heightDate == '2021-12-30' ~ 14.7,
+                               cellID == 331 & heightDate == '2022-01-21' ~ 25.5,
+                               cellID == 444 & heightDate == '2021-12-17' ~ 15.9,
+                               cellID == 460 & heightDate == '2022-01-14' ~ 16.9,
+                               cellID == 179 & heightDate == '2022-02-11' ~ 39.8,
+                               cellID == 360 & heightDate == '2021-01-14' ~ 24.0,
+                               cellID == 129 & heightDate == '2022-02-18' ~ 51.1,
+                               cellID == 438 & heightDate == "2021-12-30" ~ 13.3,
+                               #data entry errors
+                               TRUE ~ tempHeight)) %>% 
+#check data sheets: 71 & 178 on Apr 8th ; 547 on Dec 17th ; 20 & 479 on Mar 11th
+  mutate(
+         drought = case_when(str_detect(repID, 'd0') ~ "d0", #add drought variable 
+                             str_detect(repID, "d1") ~ "d1",
+                             str_detect(repID, "d2") ~ "d2",
+                             TRUE ~ "d3"),
+         germination = case_when(str_detect(repID, 'ge') ~ 'exp', #add germination variable
+                          TRUE ~ "nat"),
+         population = case_when(str_detect(repID, "^3") ~ 'p3', #add population variable
+                                str_detect(repID, "^25") ~ 'p25', 
+                                str_detect(repID, "^13") ~ 'p13',
+                                str_detect(repID, "^15") ~ 'p15',
+                                TRUE ~ 'p6'),
+         population = factor(population, levels = c('p3', 'p6', 'p13', 'p15', 'p25')),
+         repID = factor(repID),
+         drought = factor(drought, levels = c('d0', 'd1', 'd2', 'd3')),
+         germination = factor(germination, levels = c('nat', 'exp')),
+         expStart = as.Date("2021-09-29"), #temp variable for experiment day calculation (first planting date)
+         expDayHeight = as.numeric(difftime(heightDate, expStart, units = c('days')))
+         ) %>% 
+  dplyr::select(-tempHeight, -expStart) #remove temporary variables not needed in analysis
+```
+
+make rate data frame to investigate the impact of early drought on compensatory growth: 
+- if growth is compensatory, expect smallest individuals to grow faster than tall individuals post-drought (i.e., individuals impacted the most by drought) and expect individuals in the early drought treatment (d1) to catch up to individuals in the control (d0)
+```{r}
+comp_grow <- grow_time %>% 
+  filter(expDayHeight == 16 | expDayHeight == 37 | expDayHeight == 58) %>% #only keep days related to drought start, end and 3 weeks post-drought (same time as length of drought)
+  mutate(
+      period = case_when(expDayHeight == 16 ~ "dStart", # drought start 
+                         expDayHeight == 37 ~ "dEnd", # drought end
+                         expDayHeight == 58 ~ "dPost", # 3-weeks post-drought
+                         TRUE ~ NA),
+      period = factor(period, levels = c("dStart", "dEnd", "dPost"))
+    ) %>% 
+  select(-expDayHeight, -heightDate) %>% 
+  pivot_wider(names_from = period, values_from = height.Cm) %>% 
+  mutate(
+    dImpact = dEnd / dStart, # proportional impact of drought on growth (height)
+    postDiff = (dPost - dEnd), # growth (height in cm) 3 weeks post-drought 
+    postRGR = dPost / (dEnd * 3)) # growth calculated as relative to the plant's height at the end of the drought, which is multiplied by 3 to calculate growth rate per week instead of growth rate per 3 weeks 
+```
+
+take final height and combine with biomass data to investigate if height a good predictor of growth
+```{r}
+demo_ont <- demo_filter %>% 
+  left_join(grow_time, by = c("cellID", "repID")) %>% #join height data
+  filter(heightDate == "2022-04-22") %>% 
+  filter(height.Cm > 0) %>% #remove replicates with 0 height (dead)
+  left_join(biomass1, by = c("cellID", "repID")) %>% #join biomass data
+  rename(biomass.G = biomass) %>% 
+  select(cellID, repID, drought, germination, population, expDayHeight, height.Cm, biomass.G) 
+```
+
+--            --
+FINAL DATAFRAME
+--            --
+
+**grow_time** : cleaned data frame of weekly growth data for *B. hordeaceus* in the first drought experiment (2021-10-08 -- 2022-04-22) 
+  - cellID = unique number linked to deecell position in greenhouse
+  - repID = unique replicate identifier 
+  - drought = experimental drought treatment imposed 1-week post-germination ('d1'; early drought), when >50% of individuals have flowered ('d3'; late drought), or not at all ('d0'; control)
+  - germination = germination treatment where seeds were planted at the same time to capture natural variability in germination rates ('nat') or subsets of seeds were planted at regular intervals (every 2 days) to enhance variability in germination rates ('exp')
+  - population = signifies which population the original seed-bearing individual came from (seed was collected from 5 individuals belonging to unique populations located in McLaughlin Nature Reserve)
+  - heightDate = date height measurement recorded
+  - expDayHeight = experiment day, where start of the experiment = day 1
+  - height.Cm = height of replicate plant, measured to the nearest tenth of a centimeter
+  
+**comp_grow** : cleaned data frame of the impact of drought on plant height and growth after drought lifted for *B. hordeaceus* in the first drought experiment (2021-10-08 -- 2022-04-22) 
+  - cellID = unique number linked to deecell position in greenhouse
+  - repID = unique replicate identifier 
+  - drought = experimental drought treatment imposed 1-week post-germination ('d1'; early drought), when >50% of individuals have flowered ('d3'; late drought), or not at all ('d0'; control)
+  - germination = germination treatment where seeds were planted at the same time to capture natural variability in germination rates ('nat') or subsets of seeds were planted at regular intervals (every 2 days) to enhance variability in germination rates ('exp')
+  - population = signifies which population the original seed-bearing individual came from (seed was collected from 5 individuals belonging to unique populations located in McLaughlin Nature Reserve)
+  - dStart = plant height at the beginning of the drought (day 16) in cm
+  - dEnd = plant height at the end of the drought (day 37) in cm
+  - dPost = plant height 3-weeks post-drought (day 58) in cm
+  - dImpact = proportional impact of drought on growth, so values >1 indicate plant height increased in drought while values <1 indicate plant height decreased in drought
+  - postDiff = plant growth (height in cm) 3 weeks post-drought 
+  - postRGR = plant growth rate per week relative to the plant's height at the end of the drought
+  
+**demo_ont** : cleaned data frame of height and biomass data on last day of experiment for each replicate in the first drought experiment (2021-10-08 -- 2022-04-22)
+  - cellID = unique number linked to deecell position in greenhouse
+  - repID = unique replicate identifier 
+  - drought = experimental drought treatment imposed 1-week post-germination ('d1'; early drought), when >50% of individuals have flowered ('d3'; late drought), or not at all ('d0'; control)
+  - germination = germination treatment where seeds were planted at the same time to capture natural variability in germination rates ('nat') or subsets of seeds were planted at regular intervals (every 2 days) to enhance variability in germination rates ('exp')
+  - population = signifies which population the original seed-bearing individual came from (seed was collected from 5 individuals belonging to unique populations located in McLaughlin Nature Reserve)
+  - expDayHeight = experiment day, where start of the experiment = day 1
+  - height.Cm = height of replicate plant, measured to the nearest tenth of a centimeter
+  - biomass.G = biomass of replicates plant, measured to the nearest gram
+  
+
+# Seed trait data
+load files
+```{r, echo = FALSE, message = FALSE}
+germ1 <- read_csv("data_raw/exp1_germination.csv")
+seeds <- read_csv("data_raw/exp1_seed_weight.csv")
+```
+--              --
+INITIAL DATAFRAMES
+--              --
+**germ1** : contains information related to the germination of each seed planted, including: planting date & TOD, germination date & TOD, and height upon germination
+  - cellID = unique number linked to deecell position in greenhouse
+  - repID = unique replicate identifier 
+  - seed = identifiers used to distinguish two seeds (A, B) originally planted in each replicate pot to minimize germination failure, kept seed that successfully germinated or if both did, relied on random generator to choose which seed kept (see cull df for list of culled seeds)
+  - plantDate = date replicate seed was planted in Y-M-D format
+  - plantTOD = time of day (AM vs PM) replicate was planted
+  - germDate = date replicate germinated in Y-M-D format
+  - germTOD = time of day (AM vs PM) replicate germinated
+  - germHt = height of replicate upon germination
+
+**seeds** : contains weight of seeds planted for each replicate 
+  - repID = unique replicate identifier
+  - seed weight (mg) = weight of seed in mg
+  
+In **seeds** ONLY, the structure of repID is slightly altered from that described above to: 
+
+                                pop.rep#SeedID_droughtTX_germTX
+where: 
+  - pop = signifies which population the original seed-bearing individual came from (seed was collected from 5 individuals belonging to unique populations located in McLaughlin Nature Reserve)
+  - rep# = replicate number; 15 replicates were planted for each population x drought treatment x germination treatment combination
+  - SeedID = used to distinguish two seeds (A, B) originally planted in each replicate pot to minimize germination failure, kept seed that successfully germinated or if both did, relied on random generator to choose which seed kept (see cull df for list of culled seeds)
+  - droughtTX = drought treatment replicate was exposed to: d0 - no drought, d1 - early drought, d2 - mid-lifecycle drought, d3 - flowering period drought
+  - germTX = germination treatment replicate was exposed to: ge - variability in germination rate was enhanced by planting 1/3 of the total 15 replicates every other day over the course of 5 days, gn - natural variability in germination rates were preserved by planting all replicates  on the same day at the same time  
+
+* files loaded above, but will also be used here:
+**cull** : contains list of replicate duplicates that were culled ~3 weeks into the experiment
+  - cellID = unique number linked to deecell position in greenhouse
+  - repID = unique replicate identifier 
+  - seedKept = ID of seed kept after cull 
+
+
+## Wrangle  
+```{r}
+#make temp seedweight df so seeds df matches germ 1 
+seed_weight <- seeds %>% 
+  mutate(seed = ifelse(str_detect(repID, "A"), "A", "B"), # make seed column with seed IDs
+         repID = gsub("A|B", "", repID)) %>% # remove seed ID from repID
+  rename(seed.Mg = `seed weight (mg)`) #rename seed weight column for handling in R
+
+#merge germ1 & seedweight dfs
+seed_info <- germ1 %>% 
+  left_join(seed_weight, by = c("repID", "seed")) %>% 
+  left_join(cull, by = c("cellID", "repID")) %>% #add temp variable to ID culled phytometers
+  filter(seed == seedKept) %>% #remove culled phytometers
+  mutate(
+    drought = case_when(str_detect(repID, 'd0') ~ "d0", #add drought variable 
+                             str_detect(repID, "d1") ~ "d1",
+                             str_detect(repID, "d2") ~ "d2",
+                             TRUE ~ "d3"),
+    germination = case_when(str_detect(repID, 'ge') ~ 'exp', #add germination variable
+                          TRUE ~ "nat"),
+    population = case_when(str_detect(repID, '3\\.') ~ 'p3', #add population variable
+                         str_detect(repID, '13\\.') ~ 'p13',
+                         str_detect(repID, '15\\.') ~ 'p15',
+                         str_detect(repID, '25\\.') ~ 'p25',
+                         TRUE ~ 'p6'),
+    tTime2Germ = as.numeric(difftime(germDate, plantDate, units = c('days'))), # calculate number of days between planting and germination dates
+    tempTOD = ifelse(plantTOD == germTOD, 0, 0.5), # convert TOD to half days (AM = 0, PM = 0.5)
+    days2Germ = tTime2Germ + tempTOD,
+    expStart = as.Date("2021-09-29"), #temp variable for experiment day calculation (first planting date)
+    expDayGerm = as.numeric(difftime(germDate, expStart, units = c('days')))
+    ) %>%  # add to get total days to germination  
+  dplyr::select(-seedKept, -plantTOD, -germTOD, -tTime2Germ, -tempTOD, -seed, -expStart) %>% 
+  mutate(drought = factor(drought, levels = c("d0", "d1", "d2", "d3")), #set as factors
+         germination = factor(germination, levels = c("nat", "exp")),
+         population = factor(population, levels = c("p3","p6", "p13", "p15", "p25")))
+```
+--            --
+FINAL DATAFRAMES
+--            --
+
+**seed_info** : cleaned dataframe that describes seed charateristics of *B. hordeaceus* planted in the first drought experiment (2021-10-08 -- 2022-04-22) 
+  - cellID = unique number linked to deecell position in greenhouse
+  - repID = unique replicate identifier 
+  - plantDate = date replicate planted
+  - germDate = date replicate germinated
+  - germHt = height of replicate upon germination
+  - seed.MG = weight of seed planted
+  - drought = experimental drought treatment imposed 1-week post-germination ('d1'; early drought), when >50% of individuals have flowered ('d3'; late drought), or not at all ('d0'; control)
+  - germination = germination treatment where seeds were planted at the same time to capture natural variability in germination rates ('nat') or subsets of seeds were planted at regular intervals (every 2 days) to enhance variability in germination rates ('exp')
+  - population = signifies which population the original seed-bearing individual came from (seed was collected from 5 individuals belonging to unique populations located in McLaughlin Nature Reserve)
+  - days2Germ = number of days between planting and germination (counted as half days - whole numbers indicate germinated in the morning, half days indicate germinated in the afternoon)
+  - expDayGerm = experiment day replicate germinated
+
+
+# Demographic data
+load files
+```{r, echo = FALSE, message = FALSE}
+demo2_raw <- read_csv("data_raw/exp2_demographics.csv")
+demo2_mildew <- read_csv("data_raw/exp2_demographics_mildew.csv")
+biomass_raw <- read_csv("data_raw/exp2_biomass.csv")
+```
+--              --
+INITIAL DATAFRAMES
+--              --
+
+**demo2_raw** : contains demographic information for each *B. hordeaceus* replicate in the second drought experiment 
+  - cellID = unique number linked to deecell position in greenhouse
+  - repID = unique replicate identifier 
+  - flowerYMD = date of flowering in Y-M-D format
+  - seedWt.MG = weight of seeds produced by replicate in mg
+  - seedSubsetWt.Mg = weight of subset of seeds produced by replicate that were counted to produce matSeedSubsetNum and premSeedSubsetNum
+  - matSeedSubsetNum = number of mature seeds counted in weighed subset of seed produced by replicate
+  - premSeedSubsetNum = number of premature seeds counted in weighed subset of seed produced by replicate
+  - deathYMD = date of plant senesence in Y-M-D format
+  
+**demo2_mildew** : contains demographic information for *B. hordeaceus* replicates in the second drought experiment that were at some point affected by mildew
+  - cellID = unique number linked to deecell position in greenhouse
+  - repID = unique replicate identifier 
+  - seedWt.MG = weight of seeds produced by replicate in mg
+  - seedSubsetWt.Mg = weight of subset of seeds produced by replicate that were counted to produce matSeedSubsetNum and premSeedSubsetNum
+  - matSeedSubsetNum = number of mature seeds counted in weighed subset of seed produced by replicate
+  - premSeedSubsetNum = number of premature seeds counted in weighed subset of seed produced by replicate
+  
+**biomass_raw** : contains biomass data for each replicate in the second drought experiment
+  - cellID = unique number linked to deecell position in greenhouse
+  - repID = unique replicate identifier 
+  - biomass.G = dry aboveground biomass measured to the nearest one-hundredth of a gram 
+  
+
+## Clean
+```{r}
+demographics2 <- demo2_raw 
+mildew <- demo2_mildew %>% 
+  separate(repID, c("repID", "drought"), sep = "_") %>% 
+  mutate(
+    cellID = factor(cellID),
+    repID = factor(repID),
+    drought = factor(drought, levels = c("d0", "d1", "d3")),
+    seedWt.Mg = seedWt.G * 1000,
+    seedSubsetWt.Mg = seedSubsetWt.G * 1000
+  ) %>% 
+  dplyr::select(-seedWt.G, -seedSubsetWt.G)
+biomass_raw2 <- biomass_raw %>% 
+  separate(repID, c("repID", "drought"), sep = "_") %>%
+  mutate(cellID = factor(cellID),
+         repID = factor(repID),
+         drought = factor(drought, levels = c("d0", "d1", "d3")))
+```
+
+## Wrangle
+```{r}
+mildew_seeds <- mildew %>% 
+  mutate(
+         totalSubSeeds = matSeedSubsetNum + premSeedSubsetNum, #temp variable; total number of seeds in subset
+         sampleProp = seedWt.Mg / seedSubsetWt.Mg, #temp variable; how many subsets in total sample
+         mildewTotalSeeds = round(sampleProp * totalSubSeeds, digits = 0), #to nearest whole #
+         propMatSeeds = matSeedSubsetNum / totalSubSeeds, #temp variable; assuming proportion of mature seeds in subset = proportion of mature seeds in sample
+         mildewMatSeeds = round(mildewTotalSeeds * propMatSeeds, digits = 0),
+         mildewPremSeeds = round(mildewTotalSeeds * (1-propMatSeeds), digits = 0),
+  ) %>% 
+  replace(is.na(.), 0) %>% 
+  dplyr::select(cellID, repID, drought, mildewTotalSeeds, mildewMatSeeds, mildewPremSeeds)
+
+demo_fecund <- demographics2 %>% 
+  separate(repID, c("repID", "drought"), sep = "_") %>% 
+  mutate(
+         drought = factor(drought, levels = c("d0", "d1", "d3")),
+         cellID = factor(cellID),
+         repID = factor(repID)
+    ) %>% 
+  left_join(mildew_seeds, by = c("repID", "cellID", "drought")) %>% 
+  mutate(
+         flowerLength = as.numeric(difftime(deathYMD, flowerYMD, units = c('days'))),
+         startDate = as.Date("2022-11-14"), #temp variable for calculations (planting date)
+         firstFlower = as.numeric(difftime(flowerYMD, startDate, units = c('days'))),
+         totalSubSeeds = matSeedSubsetNum + premSeedSubsetNum, #temp variable for calculations
+         sampleProp = seedWt.Mg / seedSubsetWt.Mg, #temp variable for calculations
+         totalSeeds = round(sampleProp * totalSubSeeds, digits = 0) + mildewTotalSeeds, #to nearest whole #
+         propMatSeeds = matSeedSubsetNum / totalSubSeeds,
+         matSeeds = round(totalSeeds * propMatSeeds, digits = 0) + mildewMatSeeds,
+         premSeeds = round(totalSeeds * (1-propMatSeeds), digits = 0) + mildewPremSeeds,
+         deathDay = as.numeric(difftime(deathYMD, startDate, units = c('days')))
+         ) %>% 
+  dplyr::select(cellID, repID, drought, flowerYMD, deathYMD, flowerLength, firstFlower, totalSeeds, 
+         matSeeds, premSeeds, deathDay) %>% 
+  left_join(biomass_raw2, by = c("repID", "cellID", "drought"))
+```
+--            --
+FINAL DATAFRAME
+--            --
+
+**demo_fecund** : cleaned dataframe containing demographic data of *B. hordeaceus* planted in the second drought experiment (2022-2023)
+  - cellID = unique number linked to deecell position in greenhouse
+  - repID = unique replicate identifier 
+  - drought = experimental drought treatment imposed 1-week post-germination ('d1'; early drought), when >50% of individuals have flowered ('d3'; late drought), or not at all ('d0'; control)
+  - flowerYMD = date of flowering in Y-M-D format
+  - deathYMD = date of plant senesence in Y-M-D format
+  - flowerLength = length of flowering period as difference between flowerYMD and deathYMD (units = days)
+  - firstFlower = number of days into experiment when individual first showed signs of flowering (i.e., first identification of developing flowering spike; units = days)
+  - totalSeeds = total number of seeds produced per plant by multiplying the seeds counted in the subset by the ratio of SeedWt.Mg : seedSubsetWt.Mg 
+  - matSeeds = number of mature seeds per plant calculated by multiplying the proportion of mature seeds in the subset by the total number of seeds 
+  - premSeeds = number of premature seeds per plant calculated by multiplying 1 - the proportion of mature seeds in the subset by the total number of seeds 
+  - deathDay = number of days into experiment when plant died 
+  - biomass.G = dry aboveground biomass measured to the nearest one-hundredth of a gram
+  
+# Soil moisture data
+load files
+```{r}
+soil_raw1 <- read_csv("data_raw/exp1_drought.csv")
+soil_raw2 <- read_csv("data_raw/exp2_drought.csv")
+```
+--              --
+INITIAL DATAFRAME
+--              --
+**soil_raw1** : contains soil moisture data for a sample of replicate pots measured at the end of each drought period from experiment 1
+  - deecell = unique number linked to deecell position in greenhouse
+  - ID = unique replicate identifier 
+  - date = date measurements were collected in Y-M-D format
+  - drought = from which drought period measurements were collected (d1 = post-germination (early drought), d3 = flowering (late drought))
+  - VWC1-VWC3 = volumetric water content in % (measured as the proportion of 3                                                   " of soil) for each sampled replicate; measurement was repeated 3 times to get an average per pot, hence the three columns 
+  
+**soil_raw2** : contains soil moisture data for a sample of replicate pots measured at the end of each drought period from experiment 2
+  - repID = unique replicate identifier 
+  - drought = whether the replicate was exposed to drought or not (yes = droughted, no = not droughted)
+  - treatment = from which drought period measurements were collected (d1 = post-germination (early drought), d3 = flowering (late drought))
+  - vwc1-vwc3 = volumetric water content in % (measured as the proportion of 5" of soil) for each sampled replicate; measurement was repeated 3 times to get an average per pot, hence the three columns 
+  
+## Clean 
+```{r}
+soil1 <- soil_raw1 %>% 
+  filter(date == "2021-11.05") %>%  #only keep data from droughts used in manuscript
+  separate(ID, c("repID", "droughted"), sep = "_") %>% 
+  pivot_longer(6:8, names_to = "vwcRep", values_to = "vwc") %>% 
+  mutate(
+    droughted = case_when(droughted == "d1" ~ "yes",
+                          TRUE ~ "no"),
+    vwcRep = case_when(vwcRep == "VWC1" ~ 1,
+                       vwcRep == "VWC2" ~ 2,
+                       TRUE ~ 3),
+    vwcRep = factor(vwcRep),
+    repID = factor(repID),
+    droughted = factor(droughted),
+    treatmentPeriod = factor(drought),
+    experiment = factor(c("ontogeny")),
+    vwc = vwc/100 #turn into proportion
+    ) %>% 
+  relocate(experiment, repID, droughted, treatmentPeriod) %>% 
+  dplyr::select(-drought, -deecell, -date)
+  
+
+soil2 <- soil_raw2 %>% 
+  pivot_longer(4:6, names_to = "vwcRep", values_to = "vwc") %>% 
+  mutate(
+    experiment = factor(c("fecundity")),
+    vwcRep = case_when(vwcRep == "vwc1" ~ 1,
+                       vwcRep == "vwc2" ~ 2,
+                       TRUE ~ 3),
+    vwcRep = factor(vwcRep),
+    repID = factor(repID),
+    droughted = factor(drought),
+    treatmentPeriod = factor(treatment),
+    vwc = vwc/100 #turn into proportion
+    ) %>% 
+  relocate(repID, droughted, treatmentPeriod) %>% 
+  dplyr::select(-drought, -treatment)
+
+soil_moisture <- bind_rows(soil1, soil2)
+```
+--              --
+FINAL DATAFRAME
+--              --
+
+**soil_moisture** : cleaned data frame containing soil moisture data for a sample of replicate pots measured at the end of each drought period
+  - experiment = which experiment data was collected in 
+  - repID = unique replicate identifier 
+  - droughted = whether the replicate was exposed to drought or not (yes = droughted, no = not droughted)
+  - treatmentPeriod = from which drought period measurements were collected (d1 = post-germination (early drought), d3 = flowering (late drought))
+  - vwcRep = volumetric water content measurements were repeated on the same pot 3 times, number indicates the replicate of measurement
+  - vwc = volumetric water content (measured as the proportion of 5" of soil) for each sampled replicate
+
+# Script output
+Remove all intermediate data frames, lists, objects, etc. created during the cleaning process
+```{r}
+rm(grow1_NAs, cor_grow1, tgrow_time, seeds, seed_weight, germ1, grow1, grow_2_seed, cull, demographics2, demo2_raw, biomass_raw, mildew, demo2_mildew, mildew_seeds, soil_raw1, soil_raw2, soil1, soil2, biomass1, demo, demo_filter, biomass_raw2)
+```
+
