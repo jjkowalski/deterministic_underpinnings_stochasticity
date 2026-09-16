@@ -1,0 +1,287 @@
+---
+title: "03_data_vis"
+author: "Jessica Kowalski, University of British Columbia, jkowals@zoology.ubc.ca"
+date: "2023-08-19"
+output: html_document
+---
+# Set up
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+load clean dataframes
+```{r, echo = FALSE, message = FALSE}
+#source from data cleaning Rmarkdown file
+source_rmd <- function(file, local = FALSE, ...){
+  options(knitr.duplicate.label = 'allow')
+
+  tempR <- tempfile(tmpdir = ".", fileext = ".R")
+  on.exit(unlink(tempR))
+  knitr::purl(file, output=tempR, quiet = TRUE)
+
+  envir <- globalenv()
+  source(tempR, local = envir, ...)
+}
+source_rmd('01_data_clean.Rmd')
+```
+
+load packages
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+library(vegan)
+library(emmeans)
+library(car) #Anova
+library(glmmTMB)
+library(DHARMa) #glmmTMB model checking
+library(ggeffects)
+library(patchwork) #ggMarginal work around
+```
+
+# Figure 1
+
+load data
+```{r, echo = FALSE, message = FALSE}
+matSeeds_predict <- read_csv("data_clean/matSeeds_predict.csv")
+disp_CI <- read_csv("data_clean/disp_CI.csv")
+```
+
+```{r}
+var.seed_violin <- demo_fecund %>% 
+  ggplot(aes(x = drought, y = matSeeds, fill = drought, colour = drought)) +
+  geom_errorbar(data = matSeeds_predict, aes(ymin = conf.low, ymax = conf.high), width = 0.1) +
+  geom_point(data = matSeeds_predict, size = 2) +
+  geom_violin(aes(colour = drought), alpha = 0.3) +
+  scale_colour_manual(labels = c("control", "post-germination drought", "flowering drought"),
+                    name = " ",
+                    values = c("#4a9152", "#de9b71", "#9e6374")) +
+  scale_fill_manual(labels = c("control", "post-germination drought", "flowering drought"),
+                    name = " ",
+                    values = c("#4a9152", "#de9b71", "#9e6374")) +
+  scale_x_discrete(labels = c("d0" = "control", "d1" = "early \n drought", 
+                              "d3" = "late \n drought")) +
+  xlab(" ") +
+  ylab("LRS (number of mature seeds)") +
+  theme_classic() +
+  theme(legend.position = "bottom",
+        text = element_text(size = 10))
+
+var.seed_violin
+#ggsave("figures/pop6_violin_plot.pdf", height = 5, width = 5, units = "in")
+
+#percentile method
+disp_logratio_plot <- disp_CI %>% 
+  pivot_wider(names_from = drought, values_from = c(dispcoeff, upperci, lowerci)) %>% 
+  mutate(
+    ratio_d0 = dispcoeff_d0 / dispcoeff_d0,
+    ratio_d1 = dispcoeff_d1 / dispcoeff_d0,
+    ratio_d3 = dispcoeff_d3 / dispcoeff_d0,
+    upperRatio_d0 = upperci_d0 / dispcoeff_d0, 
+    upperRatio_d1 = upperci_d1 / dispcoeff_d0,
+    upperRatio_d3 = upperci_d3 / dispcoeff_d0,
+    lowerRatio_d0 = lowerci_d0 / dispcoeff_d0,
+    lowerRatio_d1 = lowerci_d1 / dispcoeff_d0,
+    lowerRatio_d3 = lowerci_d3 / dispcoeff_d0,
+  ) %>% 
+  pivot_longer(1:18, names_to = c("disptype", "drought"), values_to = "dispcoeff", names_sep = "_") %>% 
+  pivot_wider(names_from = disptype, values_from = dispcoeff) %>% 
+  ggplot(aes(y = log(ratio), x = drought, fill = drought, colour = drought)) +
+  geom_errorbar(aes(ymin = log(lowerRatio), ymax = log(upperRatio), width = 0.1)) +
+  geom_point(size = 2) +
+  scale_colour_manual(labels = c("control", "post-germination drought", "flowering drought"),
+                    name = " ",
+                    values = c("#4a9152", "#de9b71", "#9e6374")) +
+  scale_fill_manual(labels = c("control", "post-germination drought", "flowering drought"),
+                    name = " ",
+                    values = c("#4a9152", "#de9b71", "#9e6374")) +
+  scale_x_discrete(labels = c("d0" = "control", "d1" = "early \n drought", 
+                              "d3" = "late \n drought")) +
+  #scale_y_continuous(limits = c(-20, 20)) +
+  xlab(" ") +
+  ylab("Log ratio of dispersion parameter") +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+disp_logratio_plot
+#ggsave("figures/pop6_logratdisp_plot.pdf", height = 5, width = 5, units = "in")
+```
+
+# Figure 2
+
+load data
+```{r}
+raw_corr <- read_csv("data_clean/raw_corr.csv")
+pred_corr_heights <- read_csv("data_clean/pred_corr_heights.csv")
+
+#wrangle for figures and 
+predrought_height <- grow_time %>% 
+  filter(population == "p6" & drought == "d0" & expDayHeight <= 135 | # cutting off @ day 135 b/c before irrigation problems
+           population == "p6" & drought == "d1" & expDayHeight <=135) %>%
+  group_by(cellID) %>% 
+  reframe(
+    preDrought.Cm = case_when(expDayHeight == 16 ~ height.Cm,
+                                 TRUE ~ NA)
+  ) %>% 
+  drop_na(preDrought.Cm)
+```
+
+
+```{r}
+corr.heights.plot <- raw_corr %>% 
+  ggplot(aes(x = expDayHeight, y = r, group = drought)) +
+  geom_point(alpha = 0.5, aes(colour = drought), position = position_dodge2(0.2)) +
+  geom_ribbon(data = pred_corr_heights, aes(ymin = conf.low, ymax = conf.high, fill = drought), 
+              alpha = 0.25) +
+  geom_line(data = pred_corr_heights, aes(colour = drought), size = 0.5) +
+  scale_colour_manual(values = c("#4a9152", "#de9b71"),
+                      name = " ",
+                      labels = c("control", "post-germination drought")) +
+  scale_fill_manual(values = c("#4a9152", "#de9b71"),
+                      name = " ",
+                      labels = c("control", "post-germination drought")) +
+  scale_x_continuous(breaks=seq(0,150,25)) +
+  ylab("Pearson's Correlation Coefficient (r)") +
+  xlab("Day of experiment") +
+  theme_classic() + 
+  theme(legend.position = "bottom",
+        #legend.title = element_text(hjust = 0.5),
+        legend.background = element_blank(),
+        legend.key = element_blank(),
+        text = element_text(size = 10))
+
+corr.heights.plot
+#ggsave("figures/pop6_corday_plot.pdf", height = 5, width = 5, units = "in")
+
+# raw height correlations
+# day 30
+raw_corr_30 <- grow_time %>% 
+  filter(population == "p6" & drought == "d0" & expDayHeight == 30| population == "p6" & drought == "d1" & expDayHeight == 30) %>%
+  dplyr::select(cellID, drought, height.Cm, expDayHeight) %>% 
+  left_join(predrought_height, by = "cellID") %>% 
+  ggplot(aes(x = preDrought.Cm, y = height.Cm, colour = drought)) +
+  geom_point(size = 2) +
+  geom_smooth(size = 0.5, method = 'lm', se = FALSE) + 
+  scale_colour_manual(labels = c("control", "post-germination drought"),
+                    name = " ",
+                    values = c("#4a9152", "#de9b71")) +
+  xlab("") + 
+  ylab("") +
+  theme_classic() + 
+  theme(legend.position = "none")
+
+raw_corr_30
+#ggsave("figures/pop6_corday30_plot.pdf", height = 3, width = 3, units = "in")
+
+# day 92
+raw_corr_92 <- grow_time %>% 
+  filter(population == "p6" & drought == "d0" & expDayHeight == 92| population == "p6" & drought == "d1" & expDayHeight == 92) %>%
+  dplyr::select(cellID, drought, height.Cm, expDayHeight) %>% 
+  left_join(predrought_height, by = "cellID") %>% 
+  ggplot(aes(x = preDrought.Cm, y = height.Cm, colour = drought)) +
+  geom_point(size = 2) +
+  geom_smooth(size = 0.5, method = 'lm', se = FALSE) + 
+  scale_colour_manual(labels = c("control", "post-germination drought"),
+                    name = " ",
+                    values = c("#4a9152", "#de9b71")) +
+  xlab("") + 
+  ylab("") +
+  theme_classic() + 
+  theme(legend.position = "none",
+        text = element_text(size = 10))
+
+raw_corr_92
+#ggsave("figures/pop6_corday92_plot.pdf", height = 3, width = 3, units = "in")
+```
+
+```{r}
+var_height_plot <- height_disp_coef %>% 
+  ggplot(aes(y = variance, x = expDayHeight, colour = drought)) +
+  geom_errorbar(aes(ymin = lowerVar, ymax = upperVar), width = 0.1, position = position_dodge(0.5)) +
+  geom_point(size = 2, position = position_dodge(0.5)) +
+  scale_colour_manual(labels = c("control", "post-germination drought"),
+                    name = " ",
+                    values = c("#4a9152", "#de9b71")) +
+  xlab("Experiment day") +
+  ylab("Variance in height") +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+var_height_plot
+#ggsave("figures/pop6_var_height_plot.pdf", height = 5, width = 5, units = "in")
+```
+
+
+# Supplement
+
+# Fig S.2
+
+```{r}
+raw.corr.plot <- grow_time %>% 
+  filter(population == "p6" & drought == "d0" & expDayHeight <= 135 & expDayHeight > 9 | population == "p6" & drought == "d1" & expDayHeight <= 135 & expDayHeight > 9) %>%
+  dplyr::select(cellID, drought, height.Cm, expDayHeight) %>% 
+  left_join(predrought_height, by = "cellID") %>% 
+  ggplot(aes(x = log(preDrought.Cm), y = log(height.Cm), colour = drought)) +
+  geom_point() +
+  geom_smooth(size = 0.5, method = 'lm', se = FALSE) + 
+  scale_colour_manual(labels = c("control", "post-germination drought"),
+                    name = " ",
+                    values = c("#4a9152", "#de9b71")) +
+  theme_classic() + 
+  facet_wrap(~ expDayHeight) +
+  theme(legend.position = "bottom")
+
+raw.corr.plot
+#ggsave("figures/thesis/pop6_rawcorr_plot.pdf", height = 8, width = 10.5, units = "in")
+```
+
+
+# Fig S.3
+
+```{r}
+raw_height_plot<- grow_time %>% 
+  filter(population == "p6" & drought == "d0" & expDayHeight <= 135 | population == "p6" & drought == "d1" & expDayHeight <= 135) %>% 
+  ggplot(aes(x = expDayHeight, y = height.Cm, group = repID)) +
+  geom_smooth(aes(linetype = drought, colour = drought), se = FALSE, linewidth = 0.5) +
+  scale_colour_manual(labels = c("control", "post-germination drought"),
+                    name = " ",
+                    values = c("#4a9152", "#de9b71")) +
+  scale_x_continuous(breaks = c(20, 40, 60, 80, 100, 120, 140)) +
+  xlab("Day of experiment") +
+  ylab("Height (cm)") +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+raw_height_plot
+#ggsave("figures/pop6_rawheight_plot.pdf", height = 5, width = 5, units = "in")
+```
+
+# Fig S.6
+
+load data
+```{r, echo = FALSE, message = FALSE}
+pred_germ <- read_csv("data_clean/pred_germ.csv")
+
+germ_grow <- grow_time %>% 
+  filter(population == "p6" & drought == "d0" & expDayHeight == 135 |
+           population == "p6" & drought == "d1" & expDayHeight == 135) 
+```
+
+```{r}
+germ_height_plot <- pred_germ %>% 
+  ggplot(aes(y = height.Cm, x = germination, group = drought, colour = drought)) +
+  geom_point(data = germ_grow, alpha = 0.4, position = position_dodge(0.5)) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), 
+                width = 0.1, position = position_dodge(0.5)) +
+  geom_point(size = 2, position = position_dodge(0.5)) +
+  scale_colour_manual(labels = c("control", "early\ndrought"),
+                    name = " ",
+                    values = c("#4a9152", "#de9b71")) +
+  scale_x_discrete(labels = c("exp" = "experimental \n germination", 
+                              "nat" = "natural \n germination")) +
+  xlab(" ") +
+  ylab("Height (cm)") +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+germ_height_plot
+#ggsave("figures/pop6_germHeight_plot.pdf", height = 3, width = 3, units = "in")
+```
+
