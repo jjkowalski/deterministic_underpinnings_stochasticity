@@ -9,7 +9,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-load clean dataframes
+load clean dataframes (note: code will not run properly without running source code in chunk below)
 ```{r, echo = FALSE, message = FALSE}
 #source from data cleaning Rmarkdown file
 source_rmd <- function(file, local = FALSE, ...){
@@ -27,13 +27,7 @@ source_rmd('01_data_clean.Rmd')
 
 load packages
 ```{r, echo = FALSE, message = FALSE, warning = FALSE}
-library(vegan)
-library(emmeans)
-library(car) #Anova
-library(glmmTMB)
-library(DHARMa) #glmmTMB model checking
-library(ggeffects)
-library(patchwork) #ggMarginal work around
+library(ggExtra) #v.0.11.0
 ```
 
 # Figure 1
@@ -69,6 +63,7 @@ var.seed_violin
 
 #percentile method
 disp_logratio_plot <- disp_CI %>% 
+  dplyr::select(-`...1`) %>% 
   pivot_wider(names_from = drought, values_from = c(dispcoeff, upperci, lowerci)) %>% 
   mutate(
     ratio_d0 = dispcoeff_d0 / dispcoeff_d0,
@@ -112,7 +107,7 @@ raw_corr <- read_csv("data_clean/raw_corr.csv")
 pred_corr_heights <- read_csv("data_clean/pred_corr_heights.csv")
 height_disp_coef <- read_csv("data_clean/height_disp_coef.csv")
 
-#wrangle for figures and 
+#wrangle for figures 
 predrought_height <- grow_time %>% 
   filter(population == "p6" & drought == "d0" & expDayHeight <= 135 | # cutting off @ day 135 b/c before irrigation problems
            population == "p6" & drought == "d1" & expDayHeight <=135) %>%
@@ -208,6 +203,68 @@ var_height_plot <- height_disp_coef %>%
 var_height_plot
 #ggsave("figures/pop6_var_height_plot.pdf", height = 5, width = 5, units = "in")
 ```
+# Figure 3
+load data
+```{r}
+pred_phen_flower <- read_csv("data_clean/pred_flower.csv")
+pred_phen_length <- read_csv("data_clean/pred_length.csv")
+```
+
+```{r}
+phen.flower.plot <- demo_fecund %>% 
+  ggplot(aes(x = firstFlower, y = matSeeds+1, group = drought)) + #added one for visible 0s
+  geom_ribbon(data = pred_phen_flower, aes(ymin = conf.low, ymax = conf.high, fill = drought), alpha = 0.3) +
+  geom_point(alpha = 0.4, aes(colour = drought)) +
+  geom_line(data = pred_phen_flower, aes(colour = drought), size = 1) +
+  scale_colour_manual(values = c("#4a9152", "#de9b71", "#9e6374"),
+                      name = " ",
+                      labels = c("control", "post-germination drought", "flowering drought")) +
+  scale_fill_manual(values = c("#4a9152", "#de9b71", "#9e6374"),
+                      name = " ",
+                      labels = c("control", "post-germination drought", "flowering drought")) +
+  ylab("Lifetime reproductive success") +
+  scale_y_log10() +
+  xlab("Flowering day") +
+  theme_classic() + 
+  theme(legend.position = "bottom",
+        #legend.title = element_text(hjust = 0.5),
+        legend.background = element_blank(),
+        legend.key = element_blank(),
+        text = element_text(size = 10))
+
+#coloured ribbons
+ggMarginal(phen.flower.plot, data = demo_fecund, x = firstFlower, y = matSeeds, type = "boxplot", groupColour = TRUE, groupFill = TRUE)
+
+#ggsave("figures/pop6_logFT_plot.pdf", height = 3.5, width = 5, units = "in")
+```
+
+```{r}
+phen.length.plot <- demo_fecund %>% 
+  ggplot(aes(x = flowerLength, y = matSeeds+1, group = drought)) + #added 1 for visible 0s
+  geom_ribbon(data = pred_phen_length, aes(ymin = conf.low, ymax = conf.high, fill = drought), alpha = 0.3) +
+  geom_point(alpha = 0.4, aes(colour = drought)) +
+  geom_line(data = pred_phen_length, aes(colour = drought), size = 1) +
+  scale_colour_manual(values = c("#4a9152", "#de9b71", "#9e6374"),
+                      name = " ",
+                      labels = c("control", "post-germination drought", "flowering drought")) +
+  scale_fill_manual(values = c("#4a9152", "#de9b71", "#9e6374"),
+                      name = " ",
+                      labels = c("control", "post-germination drought", "flowering drought")) +
+  ylab("Lifetime reproductive success") +
+  scale_y_log10() +
+  xlab("Flowering period length") +
+  theme_classic() + 
+  theme(legend.position = "bottom",
+        #legend.title = element_text(hjust = 0.5),
+        legend.background = element_blank(),
+        legend.key = element_blank(),
+        text = element_text(size = 10))
+
+#coloured ribbons
+ggMarginal(phen.length.plot, data = demo_fecund, x = flowerLength, y = matSeeds, type = "boxplot", groupColour = TRUE, groupFill = TRUE)
+
+#ggsave("figures/pop6_logFL_plot.pdf", height = 3.5, width = 5, units = "in")
+```
 
 
 # Supplement
@@ -230,7 +287,7 @@ raw_corr_plot <- grow_time %>%
   theme(legend.position = "bottom")
 
 raw_corr_plot
-#ggsave("figures/thesis/pop6_rawcorr_plot.pdf", height = 8, width = 10.5, units = "in")
+#ggsave("figures/pop6_rawcorr_plot.pdf", height = 8, width = 10.5, units = "in")
 ```
 
 
@@ -255,39 +312,6 @@ raw_height_plot
 ```
 
 # Fig S.5
-
-load data
-```{r}
-pred_comp_grow <- read_csv("data_clean/pred_comp_grow.csv")
-```
-
-```{r}
-comp_grow_plot <- comp_p6 %>% 
-  ggplot(aes(x = dImpact, y = postRGR, group = drought)) + #added one for visible 0s
-  geom_ribbon(data = pred_comp_grow, aes(ymin = conf.low, ymax = conf.high, fill = drought), alpha = 0.3) +
-  geom_point(alpha = 0.4, aes(colour = drought)) +
-  geom_line(data = pred_comp, aes(colour = drought), size = 1) +
-  scale_colour_manual(values = c("#4a9152", "#de9b71"),
-                      name = " ",
-                      labels = c("control", "early drought")) +
-  scale_fill_manual(values = c("#4a9152", "#de9b71"),
-                      name = " ",
-                      labels = c("control", "early drought")) +
-  ylab("Post-drought growth rate (cm * week^-1)") +
-  xlab("Post-drought height / pre-drought height") +
-  theme_classic() + 
-  theme(legend.position = "bottom",
-        #legend.title = element_text(hjust = 0.5),
-        legend.background = element_blank(),
-        legend.key = element_blank(),
-        text = element_text(size = 10))
-
-comp_grow_plot
-#ggsave("figures/pop6_comp_grow_plot.pdf", height = 5, width = 5, units = "in")
-```
-
-
-# Fig S.6
 
 load data
 ```{r, echo = FALSE, message = FALSE}
@@ -317,5 +341,67 @@ germ_height_plot <- pred_germ %>%
 
 germ_height_plot
 #ggsave("figures/pop6_germHeight_plot.pdf", height = 3, width = 3, units = "in")
+```
+
+# Fig S.6
+
+load data
+```{r}
+pred_Osoil <- read_csv("data_clean/pred_Osoil.csv")
+pred_Fsoil <- read_csv("data_clean/pred_Fsoil.csv")
+
+#wrangle soil moisture
+soil_moisture <- soil_moisture %>% 
+  mutate(treatInteract = case_when(treatmentPeriod == "d1" & droughted == "no" ~ "d1.no",
+                                   treatmentPeriod == "d1" & droughted == "yes" ~ "d1.yes", 
+                                   treatmentPeriod == "d3" & droughted == "no" ~ "d3.no",
+                                   TRUE ~ "d3.yes")) %>% 
+  mutate(binVWC = case_when(vwc > 0 ~ 1, 
+                            TRUE ~ 0)) # to match prediction data frames
+```
+
+```{r}
+soil_onto_plot <- pred_Osoil %>% 
+  ggplot(aes(y = binVWC, x = droughted, group = droughted, colour = droughted)) +
+  geom_point(data = subset(soil_moisture, experiment == "ontogeny"), 
+             alpha = 0.3, shape = 1, position = position_jitter(width = 0.2, height = 0)) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), 
+                width = 0.1) +
+  geom_point(size = 2) +
+  scale_colour_manual(labels = c("control", "droughted"),
+                    name = " ",
+                    values = c("#4a9152", "#de9b71")) +
+  scale_x_discrete(labels = c("no" = "control", 
+                              "yes" = "droughted")) +
+  xlab(" ") +
+  ylab("Probability a replicate pot has a VWC > 0") +
+  theme_classic() +
+  theme(legend.position = "none")
+
+soil_onto_plot
+#ggsave("figures/pop6_soilVWC2_plot.pdf", height = 2.5, width = 2.5, units = "in")
+```
+
+```{r}
+soil_fecund_plot <- pred_Fsoil %>% 
+  ggplot(aes(y = binVWC, x = treatmentPeriod, group = treatInteract, colour = treatInteract)) +
+  geom_point(data = subset(soil_moisture, experiment == "fecundity"), 
+             alpha = 0.4, shape = 1, 
+             position = position_jitterdodge(jitter.width = 0.5, jitter.height = 0, dodge.width = 1)) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), 
+                width = 0.1, position = position_dodge(1)) +
+  geom_point(size = 2, position = position_dodge(1)) +
+  scale_colour_manual(labels = c("control", "droughted", "control", "droughted"),
+                    name = " ",
+                    values = c("#4a9152", "#de9b71", "#4a9152", "#9e6374")) +
+  scale_x_discrete(labels = c("d1" = "early drought", 
+                              "d3" = "late drought")) +
+  xlab(" ") +
+  ylab("Probability a replicate pot has a VWC > 0") +
+  theme_classic() +
+  theme(legend.position = "none")
+
+soil_fecund_plot
+#ggsave("figures/pop6_soilVWC_plot.pdf", height = 2.5, width = 4, units = "in")
 ```
 
