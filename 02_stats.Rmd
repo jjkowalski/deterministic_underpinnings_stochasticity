@@ -39,14 +39,7 @@ library(glmmTMB) #v. 1.1.14
 library(DHARMa) #v. 0.4.7
 library(ggeffects) #v. 2.3.2
 library(correlation) #v. 0.8.8
-#library(mgcv) #v. 1.9-3
-#library(ggpubr) #v. 0.6.1
-#library(gratia) #v. 0.10.0
-#library(ggExtra)
-#library(MuMIn)
 library(splines) #v. 4.5.2
-#library(boot)
-#library(performance)
 ```
 
 # Q1 Does the timing of a stressor (i.e. drought) impact the variance in seed output? 
@@ -268,8 +261,8 @@ note: all analyses using data from the ontogeny experiment is only using data co
 look at data
 ```{r}
 germ_grow <- grow_time %>% 
-  filter(population == "p6" & drought == "d0" & expDayHeight == 135 |
-           population == "p6" & drought == "d1" & expDayHeight == 135) 
+  filter(drought == "d0" & expDayHeight == 135 |
+           & drought == "d1" & expDayHeight == 135) 
 
 germ_grow %>% 
   ggplot(aes(y = height.Cm, x = germination, colour = drought)) + 
@@ -311,8 +304,8 @@ if correlation becomes negative, then weaker pre-drought get stronger post-droug
 ```{r}
 # extract pre-drought height for each replicate
 predrought_height <- grow_time %>% 
-  filter(population == "p6" & drought == "d0" & expDayHeight <= 135 | # cutting off @ day 135 b/c before irrigation problems
-           population == "p6" & drought == "d1" & expDayHeight <=135) %>%
+  filter(drought == "d0" & expDayHeight <= 135 | # cutting off @ day 135 b/c before irrigation problems
+           drought == "d1" & expDayHeight <=135) %>%
   group_by(cellID) %>% 
   reframe(
     preDrought.Cm = case_when(expDayHeight == 16 ~ height.Cm,
@@ -322,8 +315,8 @@ predrought_height <- grow_time %>%
 
 # make data frame for remaining calculations
 grow_p6 <- grow_time %>% 
-  filter(population == "p6" & drought == "d0" & expDayHeight <= 135 | # remove other populations and only keep d1 and d0
-           population == "p6" & drought == "d1" & expDayHeight <= 135) %>%
+  filter(drought == "d0" & expDayHeight <= 135 | # remove other populations and only keep d1 and d0
+           drought == "d1" & expDayHeight <= 135) %>%
   dplyr::select(cellID, drought, height.Cm, expDayHeight, germination) %>% 
   left_join(predrought_height, by = "cellID") %>% 
   #pivot_wider(values_from = "height.Cm", names_from = "expDayHeight") %>% 
@@ -339,7 +332,7 @@ calculate correlation coefficients within each drought group
 ```{r}
 #d0 height correlations
 d0_correlations <- grow_time %>% 
-  filter(population == "p6" & drought == "d0" & expDayHeight <= 135) %>%
+  filter(drought == "d0" & expDayHeight <= 135) %>%
   dplyr::select(cellID, drought, height.Cm, expDayHeight) %>% 
   left_join(predrought_height, by = "cellID") %>% 
   #pivot_wider(values_from = "height.Cm", names_from = "expDayHeight") %>% 
@@ -357,7 +350,7 @@ d0_correlations <- grow_time %>%
 
 #d1 height correlations
 d1_correlations <- grow_time %>% 
-  filter(population == "p6" & drought == "d1" & expDayHeight <= 135) %>%
+  filter(drought == "d1" & expDayHeight <= 135) %>%
   dplyr::select(cellID, drought, height.Cm, expDayHeight) %>% 
   left_join(predrought_height, by = "cellID") %>% 
   #pivot_wider(values_from = "height.Cm", names_from = "expDayHeight") %>% 
@@ -449,6 +442,7 @@ h_output <- simulateResiduals(height_lm, n = 1000); plot(h_output)
 hdisp_output <- simulateResiduals(height_disp_lm, n = 1000); plot(hdisp_output)
 
 anova(height_lm, height_disp_lm) # dispersion model better fit
+Anova(height_disp_lm, "disp", type = 2, test.statistic = "Chisq") 
 ```
 
 ```{r}
@@ -606,51 +600,237 @@ height_disp_coef <- hdisp_coefs %>%
 #write.csv(height_disp_coef, file = "data_clean/height_disp_coef.csv")
 ```
 
-## Do individuals display compensatory growth in response to an acute stressor early in life? 
 
-if so, expect individuals who were most effected by drought to have the largest growth rate after drought in order to catch up: so expect d1 to have negative slope (smallest have highest growth rate) and expect d0 to have slope of 0 (no correlation between size and growth rate)
-- d0 could also have negative slope if small individuals are growing at a faster pace than large individuals
+# Q3 Does the relationship between flowering time and flowering length change with drought? 
 
-predictions:
-- exact compensation = d0 and d1 have the same slope
-- over compensation = d1 has a steeper slope than d0
-- under compensation = d1 has a shallower slope and d0
-- no compensation = d1 has flat slope (smaller individuals not growing faster to catch up)
-
-look at raw data
 ```{r}
-comp_p6 <- comp_grow %>% 
-  filter(population == "p6" & (drought == "d0" | drought == "d1"))
+#look at shape of data
 
-comp_p6%>% 
-  ggplot(aes(x = dImpact, y = postRGR, group = drought)) + 
-  geom_point(size = 1, aes(colour = drought)) +
-  geom_smooth(aes(colour = drought), method = 'lm') +
-  theme_classic() 
+demo_fecund %>% 
+  ggplot(aes(x = flowerLength, y = matSeeds, colour = drought)) +
+  geom_point() +
+  theme_classic()
+
+demo_fecund %>% 
+  ggplot(aes(x = firstFlower, y = matSeeds, colour = drought)) +
+  geom_point() +
+  theme_classic()
+# looks like there are some non-linear relationships
+# try quadratic fits for continuous predictors
 ```
 
-model
+
+model fitting & selection
 ```{r}
-comp_gaus <- glmmTMB(postRGR ~ dImpact * drought + (1|cellID),
-                     family = gaussian(),
-                     data = comp_p6)
+#---- parameter selection ----
 
-plot(simulateResiduals(comp_gaus)) # good
+# first fit most comprehensive model 
 
-# interaction has no effect on relative growth response, remove and test predictors additive effects
-up_comp_gaus <- update(comp_gaus, postRGR ~ dImpact + drought + (1|cellID))
+phen_nb_full <- glmmTMB(matSeeds ~ drought * poly(firstFlower, 2) * poly(flowerLength, 2), 
+                   family = nbinom1(),
+                   dispformula = ~drought,
+                   na.action = "na.fail",
+                   data = demo_fecund)
 
-plot(simulateResiduals(up_comp_gaus)) # good
+phen_output <- simulateResiduals(phen_nb_full)
+plot(phen_output) #no issues
 
-Anova(up_comp_gaus, type = 2) # drought has no impact, just relative change in size 
+# Anova on full model reveals many insignificant interaction terms, worried about overfitting, check if removing some of the interactions improves model fit
 
-plot(ggemmeans(up_comp_gaus, terms = c("dImpact", "drought"))) 
+phen_nb_nest1 <- glmmTMB(matSeeds ~ drought * poly(firstFlower, 2) + poly(flowerLength, 2),
+                   family = nbinom1(),
+                   dispformula = ~drought, 
+                   data = demo_fecund)
 
-pred_comp <- as.data.frame(ggemmeans(up_comp_gaus, terms = c("dImpact", "drought"))) %>% 
-  rename(dImpact = x,
+phen_nb_nest2 <- update(phen_nb_nest1, matSeeds ~ drought + poly(firstFlower, 2) * poly(flowerLength, 2))
+
+phen_nb_nest3 <- update(phen_nb_nest1, matSeeds ~ drought * poly(flowerLength, 2) + poly(firstFlower, 2))
+
+anova(phen_nb_full, phen_nb_nest1, phen_nb_nest2, phen_nb_nest3) #nested version #1 is best fit
+
+phen_nb_best <- phen_nb_nest1
+
+#---- confirm distribution selection ----
+
+phen_poiss_best <- update(phen_nb_best, family = poisson())
+
+phen.poiss_output <- simulateResiduals(phen_poiss_best)
+plot(phen.poiss_output) #bad fit
+
+phen_nb2_best <- update(phen_nb_best, family = nbinom2())
+
+phen.nb2_output <- simulateResiduals(phen_nb2_best)
+plot(phen.nb2_output) #poor
+
+phen_compois_best <- update(phen_nb_best, family = compois())
+
+phen.compois_output <- simulateResiduals(phen_compois_best, n = 1000)
+plot(phen.compois_output) #no issues
+
+anova(phen_poiss_best, phen_nb_best, phen_nb2_best, phen_compois_best)
+
+phen_nb_best <- update(phen_nb_best, REML = TRUE)
+
+#---- null model ----
+# null model with no dispersion parameter to calculate expected variance for each group under the assumption that there is homoskedasticity
+
+null.phen_nb_best <- update(phen_nb_best, dispformula = ~1)
+
+#verify dispersion model better fit
+anova(phen_nb_best, null.phen_nb_best)
+```
+
+hypothesis testing
+```{r}
+Anova(phen_nb_best, type = 3)
+```
+expect drought in the flowering period to disrupt flower production, so individuals that flower early have to reallocate energy already designated for reproduction to survival, aborting seeds & inflorescent development (essentially wasting E) & therefore have hard time recovering (produce less seeds than normally would) but individuals that flower late don't waste as much energy because haven't already started developing reproductive organs (or as many)
+
+### How does the impact of flowering date on LRS change across drought treatments? 
+```{r}
+emtrends(phen_nb_best, pairwise ~ drought, var = 'firstFlower', type = "response", max.degree = 2)
+```
+d3 has different slope than d0 & d1
+d0 & d1 have different curvature 
+
+```{r}
+phen_flower <- ggemmeans(phen_nb_best, terms = c("firstFlower [all]", "drought"))
+plot(phen_flower)
+
+pred_phen_flower <- as.data.frame(phen_flower) %>% 
+  rename(firstFlower = x,
          drought = group,
-         postRGR = predicted)
+         matSeeds = predicted)
 
 #save for plotting
-#write.csv(pred_comp, file = "data_clean/pred_comp_grow.csv")
+#write.csv(pred_phen_flower, file = "data_clean/pred_flower.csv")
+```
+
+
+### How does the impact of flowering period length on LRS change across drought treatments? 
+```{r}
+phen_length <- ggemmeans(phen_nb_best, terms = c("flowerLength [all]", "drought"))
+plot(phen_length)
+
+pred_phen_length <- as.data.frame(phen_length) %>% 
+  rename(flowerLength = x,
+         drought = group,
+         matSeeds = predicted)
+
+#save for plotting
+#write.csv(pred_phen_length, file = "data_clean/pred_length.csv")
+```
+
+# Appendix
+
+## Soil moisture
+Did soil moisture differ between droughted pots and control/non-droughted pots? 
+
+look at data
+```{r}
+soil_moisture %>% 
+  filter(experiment == "ontogeny") %>% 
+  ggplot(aes(y = vwc, x = droughted)) +
+  geom_point() +
+  geom_violin() +
+  theme_classic()
+
+soil_moisture %>% 
+  filter(experiment == "fecundity") %>% 
+  ggplot(aes(y = vwc, x = droughted)) +
+  geom_point() +
+  geom_violin() +
+  facet_wrap(~ treatmentPeriod) +
+  theme_classic()
+```
+
+
+try to fit with beta distribution:
+```{r}
+soil_moisture2 <- soil_moisture %>% # collapse replicated measurements into single mean per pot
+  group_by(treatmentPeriod, droughted, experiment, repID) %>% 
+  summarize(vwc = mean(vwc))
+
+# beta family can't handle 0s, scaled data to not include 0 using value that is half of the smallest VWC measured
+soil_beta <- glmmTMB(vwc + 0.0005 ~ droughted, 
+                     family = beta_family(),
+                     #dispformula = ~ droughted,
+                     #ziformula = ~ droughted,
+                     data = subset(soil_moisture2, experiment == "ontogeny"))
+
+soil_output <- simulateResiduals(soil_beta, n = 1000)
+plot(soil_output) 
+
+# bad residuals with beta distribution, try betabinomial
+
+soil_betabin <- glmmTMB(vwc + 0.0005 ~ droughted,
+                     family = betabinomial(),
+                     #dispformula = ~ droughted,
+                     #ziformula = ~ droughted,
+                     data = subset(soil_moisture2, experiment == "ontogeny"))
+diagnose(soil_betabin)
+soil_bboutput <- simulateResiduals(soil_betabin, n = 1000)
+plot(soil_bboutput) 
+
+# even worse, try binomial approach
+```
+
+try to fit with binomial distribution: 
+```{r}
+soil_moisture <- soil_moisture %>% 
+  mutate(binVWC = case_when(vwc > 0 ~ 1, 
+                            TRUE ~ 0)) # turn data into binomial data (soil had some water > 0; soil had no water = 0)
+
+
+Osoil_binom <- glmmTMB(binVWC ~ droughted + (1|repID),
+                       #dispformula = ~ droughted,
+                      family = binomial(link = "logit"),
+                      data = subset(soil_moisture, experiment == "ontogeny"))
+
+soil_outputO <- simulateResiduals(Osoil_binom, n = 1000)
+plot(soil_outputO)
+testDispersion(soil_outputO)
+
+Fsoil_binom <- glmmTMB(binVWC ~ droughted + treatmentPeriod + (1|repID),
+                       #dispformula = ~ droughted + treatmentPeriod,
+                       family = binomial(link = "logit"),
+                       data = subset(soil_moisture, experiment == "fecundity"))
+
+soil_outputF <- simulateResiduals(Fsoil_binom, n = 1000)
+plot(soil_outputF)
+```
+
+```{r}
+Anova(Osoil_binom, type = 2)
+emmeans(Osoil_binom, ~ droughted, type = "response")
+
+Osoil_vwc <- ggemmeans(Osoil_binom, terms = "droughted")
+plot(Osoil_vwc)
+
+pred_Osoil <- as.data.frame(Osoil_vwc) %>% 
+  rename(droughted = x,
+         binVWC = predicted)
+
+#save for plotting
+#write.csv(pred_Osoil, file = "data_clean/pred_Osoil.csv")
+```
+
+```{r}
+Anova(Fsoil_binom, type = 2) # interaction not significant, go with type 2
+emmeans(Fsoil_binom, ~ droughted + treatmentPeriod, type = "response")
+
+Fsoil_vwc <- ggemmeans(Fsoil_binom, terms = c("treatmentPeriod", "droughted"))
+plot(Fsoil_vwc)
+
+pred_Fsoil <- as.data.frame(Fsoil_vwc) %>% 
+  rename(treatmentPeriod = x,
+         droughted = group,
+         binVWC = predicted) %>% 
+  mutate(treatInteract = case_when(treatmentPeriod == "d1" & droughted == "no" ~ "d1.no",
+                                   treatmentPeriod == "d1" & droughted == "yes" ~ "d1.yes", 
+                                   treatmentPeriod == "d3" & droughted == "no" ~ "d3.no",
+                                   TRUE ~ "d3.yes"))
+
+#save for plotting
+#write.csv(pred_Fsoil, file = "data_clean/pred_Fsoil.csv")
 ```
